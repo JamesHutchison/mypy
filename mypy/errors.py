@@ -280,6 +280,7 @@ class Errors:
         self.read_source = read_source
         self.many_errors_threshold = many_errors_threshold
         self.options = options
+        self.prior_errors_map = {}
         self.initialize()
 
     def initialize(self) -> None:
@@ -297,6 +298,7 @@ class Errors:
         self.seen_import_error = False
 
     def reset(self) -> None:
+        self.prior_errors_map = self.error_info_map | self.prior_errors_map
         self.initialize()
 
     def set_ignore_prefix(self, prefix: str) -> None:
@@ -834,32 +836,46 @@ class Errors:
                     a.append(" " * (DEFAULT_SOURCE_OFFSET + column) + marker)
         return a
 
-    def file_messages(self, path: str) -> list[str]:
+    def file_messages(self, path: str, error_info_map: dict | None = None) -> list[str]:
         """Return a string list of new error messages from a given file.
 
         Use a form suitable for displaying to the user.
         """
-        if path not in self.error_info_map:
+        if error_info_map is None:
+            error_info_map = self.error_info_map
+        if path not in error_info_map:
             return []
         self.flushed_files.add(path)
         source_lines = None
         if self.pretty:
             assert self.read_source
             source_lines = self.read_source(path)
-        return self.format_messages(self.error_info_map[path], source_lines)
+        return self.format_messages(error_info_map[path], source_lines)
 
-    def new_messages(self) -> list[str]:
+    def new_messages(self, error_info_map: dict | None = None) -> list[str]:
         """Return a string list of new error messages.
 
         Use a form suitable for displaying to the user.
         Errors from different files are ordered based on the order in which
         they first generated an error.
         """
+        if error_info_map is None:
+            error_info_map = self.error_info_map
         msgs = []
-        for path in self.error_info_map.keys():
+        for path in error_info_map.keys():
             if path not in self.flushed_files:
-                msgs.extend(self.file_messages(path))
+                msgs.extend(self.file_messages(path, error_info_map))
         return msgs
+
+    def prior_messages(self) -> list[str]:
+        """
+        Return a string list of prior error messages.
+
+        Use a form suitable for displaying to the user.
+        Errors from different files are ordered based on the order in which
+        they first generated an error.
+        """
+        return self.new_messages(self.prior_errors_map)
 
     def targets(self) -> set[str]:
         """Return a set of all targets that contain errors."""

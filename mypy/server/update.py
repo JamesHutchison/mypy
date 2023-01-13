@@ -264,6 +264,7 @@ class FineGrainedBuildManager:
                 changed_modules, initial_set, removed_set, blocking_error, followed
             )
             changed_modules, (next_id, next_path), blocker_messages = result
+            self.manager.errors.prior_errors_map.pop(next_path, None)
 
             if blocker_messages is not None:
                 self.blocking_error = (next_id, next_path)
@@ -271,32 +272,14 @@ class FineGrainedBuildManager:
                 messages = blocker_messages
                 break
 
-            # It looks like we are done processing everything, so now
-            # reprocess all targets with errors. We are careful to
-            # support the possibility that reprocessing an errored module
-            # might trigger loading of a module, but I am not sure
-            # if this can really happen.
             if not changed_modules:
-                # N.B: We just checked next_id, so manager.errors contains
-                # the errors from it. Thus we consider next_id up to date
-                # when propagating changes from the errored targets,
-                # which prevents us from reprocessing errors in it.
-                changed_modules = propagate_changes_using_dependencies(
-                    self.manager,
-                    self.graph,
-                    self.deps,
-                    set(),
-                    {next_id},
-                    self.previous_targets_with_errors,
-                    self.processed_targets,
-                )
-                changed_modules = dedupe_modules(changed_modules)
-                if not changed_modules:
-                    # Preserve state needed for the next update.
-                    self.previous_targets_with_errors = self.manager.errors.targets()
-                    messages = self.manager.errors.new_messages()
-                    break
+                # Preserve state needed for the next update.
+                self.previous_targets_with_errors = self.manager.errors.targets()
+                break
 
+        new_messages = self.manager.errors.new_messages()
+        prior_messages = self.manager.errors.prior_messages()
+        messages = new_messages + prior_messages
         messages = sort_messages_preserving_file_order(messages, self.previous_messages)
         self.previous_messages = messages[:]
         return messages
