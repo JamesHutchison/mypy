@@ -60,3 +60,9 @@ test_capi
 /.mypyc-flake8-cache.json
 /mypyc/lib-rt/build/
 /mypyc/lib-rt/*.so
+
+# standard environment info
+.env
+
+# ball of mud
+ball_of_mud_test_dir
