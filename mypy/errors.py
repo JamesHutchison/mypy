@@ -297,8 +297,14 @@ class Errors:
         self.target_module = None
         self.seen_import_error = False
 
-    def reset(self) -> None:
-        self.prior_errors_map = self.error_info_map | self.prior_errors_map
+    def reset(self, full: bool = False, module: str | None = None) -> None:
+        assert not (full and module)
+        if full:
+            self.prior_errors_map = {}
+        elif module:
+            self.prior_errors_map[module] = []
+        else:
+            self.prior_errors_map |= self.error_info_map
         self.initialize()
 
     def set_ignore_prefix(self, prefix: str) -> None:

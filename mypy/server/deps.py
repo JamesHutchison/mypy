@@ -83,6 +83,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import List
+from mypy.build import DependencyGraph
 
 from mypy.nodes import (
     GDEF,
@@ -185,7 +186,7 @@ def get_dependencies(
     """Get all dependencies of a node, recursively."""
     visitor = DependencyVisitor(type_map, python_version, target.alias_deps, options)
     target.accept(visitor)
-    return visitor.map
+    return DependencyGraph(visitor.map)  # visitor.map
 
 
 def get_dependencies_of_target(
@@ -1093,9 +1094,9 @@ class TypeTriggersVisitor(TypeVisitor[List[str]]):
         return triggers
 
 
-def merge_dependencies(new_deps: dict[str, set[str]], deps: dict[str, set[str]]) -> None:
+def merge_dependencies(new_deps: dict[str, set[str]], deps: DependencyGraph) -> None:
     for trigger, targets in new_deps.items():
-        deps.setdefault(trigger, set()).update(targets)
+        deps.update(trigger, targets)
 
 
 def non_trivial_bases(info: TypeInfo) -> list[TypeInfo]:

@@ -199,6 +199,14 @@ class Server:
         # the output terminal options here.
         self.formatter = FancyFormatter(sys.stdout, sys.stderr, options.hide_error_codes)
 
+    def clear_errors(self) -> None:
+        """
+        Clear all errors. This will reset the state meaning that when running
+        incremental changes, previously found errors will not be displayed to the user.
+        """
+        if self.fine_grained_manager:
+            self.fine_grained_manager.manager.errors.reset(full=True)
+
     def _response_metadata(self) -> dict[str, str]:
         py_version = f"{self.options.python_version[0]}_{self.options.python_version[1]}"
         return {"platform": self.options.platform, "python_version": py_version}

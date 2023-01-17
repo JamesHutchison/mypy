@@ -91,11 +91,12 @@ class FineGrainedSuite(DataSuite):
 
         num_regular_incremental_steps = self.get_build_steps(main_src)
         step = 1
-        sources = self.parse_sources(main_src, step, options)
+        sources: list[BuildSource] = self.parse_sources(main_src, step, options)
         if step <= num_regular_incremental_steps:
             messages = self.build(build_options, sources)
         else:
             messages = self.run_check(server, sources)
+            server.clear_errors()  # clear error saving to /dev/null
 
         a = []
         if messages:
@@ -111,9 +112,13 @@ class FineGrainedSuite(DataSuite):
 
         steps = testcase.find_steps()
         all_triggered = []
+        a_before = None
 
         for operations in steps:
             step += 1
+            # server.clear_errors()
+            if a_before is not None:
+                assert a == a_before
             output, triggered = self.perform_step(
                 operations,
                 server,
@@ -126,6 +131,9 @@ class FineGrainedSuite(DataSuite):
             )
             a.append("==")
             a.extend(output)
+            import copy
+
+            a_before = copy.deepcopy(a)
             all_triggered.extend(triggered)
 
         # Normalize paths in test output (for Windows).
@@ -168,6 +176,7 @@ class FineGrainedSuite(DataSuite):
         return options
 
     def run_check(self, server: Server, sources: list[BuildSource]) -> list[str]:
+        # server.clear_errors()
         response = server.check(sources, export_types=True, is_tty=False, terminal_width=-1)
         out = cast(str, response["out"] or response["err"])
         return out.splitlines()

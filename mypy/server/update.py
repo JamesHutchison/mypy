@@ -126,6 +126,7 @@ from mypy.build import (
     FAKE_ROOT_MODULE,
     BuildManager,
     BuildResult,
+    DependencyGraph,
     Graph,
     State,
     load_graph,
@@ -160,7 +161,8 @@ from mypy.server.trigger import WILDCARD_TAG, make_trigger
 from mypy.typestate import type_state
 from mypy.util import module_prefix, split_target
 
-MAX_ITER: Final = 1000
+MAX_DEPTH: Final = 2
+MAX_ITER: Final = 10
 
 SENSITIVE_INTERNAL_MODULES = tuple(core_modules) + ("mypy_extensions", "typing_extensions")
 
@@ -272,32 +274,47 @@ class FineGrainedBuildManager:
                 messages = blocker_messages
                 break
 
+            # It looks like we are done processing everything, so now
+            # reprocess all targets with errors. We are careful to
+            # support the possibility that reprocessing an errored module
+            # might trigger loading of a module, but I am not sure
+            # if this can really happen.
+            if not changed_modules:
+                # N.B: We just checked next_id, so manager.errors contains
+                # the errors from it. Thus we consider next_id up to date
+                # when propagating changes from the errored targets,
+                # which prevents us from reprocessing errors in it.
+                changed_modules = propagate_changes_using_dependencies(
+                    self.manager,
+                    self.graph,
+                    self.deps,
+                    set(),
+                    {next_id},
+                    set(),  # self.previous_targets_with_errors,
+                    self.processed_targets,
+                )
+                changed_modules = dedupe_modules(changed_modules)
             if not changed_modules:
                 # Preserve state needed for the next update.
                 self.previous_targets_with_errors = self.manager.errors.targets()
+                messages = self.manager.errors.new_messages()
                 break
 
-        new_messages = self.manager.errors.new_messages()
+        # new_messages = self.manager.errors.new_messages()
         prior_messages = self.manager.errors.prior_messages()
-        messages = new_messages + prior_messages
-        messages = sort_messages_preserving_file_order(messages, self.previous_messages)
-        self.previous_messages = messages[:]
-        return messages
+        new_messages = messages + prior_messages
+        sorted_messages = sort_messages_preserving_file_order(new_messages, self.previous_messages)
+        self.previous_messages = sorted_messages[:]
+        return sorted_messages
 
     def trigger(self, target: str) -> list[str]:
         """Trigger a specific target explicitly.
 
         This is intended for use by the suggestions engine.
         """
-        self.manager.errors.reset()
+        self.manager.errors.reset(module=target)
         changed_modules = propagate_changes_using_dependencies(
-            self.manager,
-            self.graph,
-            self.deps,
-            set(),
-            set(),
-            self.previous_targets_with_errors | {target},
-            [],
+            self.manager, self.graph, self.deps, self.reverse_deps, set(), set(), {target}, []
         )
         # Preserve state needed for the next update.
         self.previous_targets_with_errors = self.manager.errors.targets()
@@ -405,7 +422,7 @@ class FineGrainedBuildManager:
             snapshot = snapshot_symbol_table(module, manager.modules[module].names)
             old_snapshots[module] = snapshot
 
-        manager.errors.reset()
+        manager.errors.reset(module=module)
         self.processed_targets.append(module)
         result = update_module_isolated(
             module, path, manager, previous_modules, graph, force_removed, followed
@@ -428,6 +445,7 @@ class FineGrainedBuildManager:
         if module in graph:
             graph[module].update_fine_grained_deps(self.deps)
             graph[module].free_state()
+        # TODO: needs to ONLY reprocess what wasn't done before, not every dependency
         remaining += propagate_changes_using_dependencies(
             manager,
             graph,
@@ -807,7 +825,7 @@ def replace_modules_with_new_variants(
 def propagate_changes_using_dependencies(
     manager: BuildManager,
     graph: dict[str, State],
-    deps: dict[str, set[str]],
+    deps: DependencyGraph,
     triggered: set[str],
     up_to_date_modules: set[str],
     targets_with_errors: set[str],
@@ -873,8 +891,9 @@ def find_targets_recursive(
     manager: BuildManager,
     graph: Graph,
     triggers: set[str],
-    deps: dict[str, set[str]],
+    deps: DependencyGraph,
     up_to_date_modules: set[str],
+    max_depth: int = MAX_DEPTH,
 ) -> tuple[dict[str, set[FineGrainedDeferredNode]], set[str], set[TypeInfo]]:
     """Find names of all targets that need to reprocessed, given some triggers.
 
@@ -888,10 +907,13 @@ def find_targets_recursive(
     stale_protos: set[TypeInfo] = set()
     unloaded_files: set[str] = set()
 
+    depth = 0
+
     # Find AST nodes corresponding to each target.
     #
     # TODO: Don't rely on a set, since the items are in an unpredictable order.
-    while worklist:
+    # TODO: test that if MAX_DEPTH is 2, this loops 2 times
+    while worklist and ((depth := depth + 1) <= max_depth):
         processed |= worklist
         current = worklist
         worklist = set()
@@ -902,6 +924,7 @@ def find_targets_recursive(
                     ensure_deps_loaded(module_id, deps, graph)
 
                 worklist |= deps.get(target, set()) - processed
+                worklist |= deps.get_reverse(target, set()) - processed
             else:
                 module_id = module_prefix(graph, target)
                 if module_id is None:
@@ -936,7 +959,7 @@ def reprocess_nodes(
     graph: dict[str, State],
     module_id: str,
     nodeset: set[FineGrainedDeferredNode],
-    deps: dict[str, set[str]],
+    deps: DependencyGraph,
     processed_targets: list[str],
 ) -> set[str]:
     """Reprocess a set of nodes within a single module.
@@ -1050,7 +1073,7 @@ def update_deps(
     module_id: str,
     nodes: list[FineGrainedDeferredNode],
     graph: dict[str, State],
-    deps: dict[str, set[str]],
+    deps: DependencyGraph,
     options: Options,
 ) -> None:
     for deferred in nodes:
@@ -1184,7 +1207,7 @@ else:
 def refresh_suppressed_submodules(
     module: str,
     path: str | None,
-    deps: dict[str, set[str]],
+    deps: DependencyGraph,
     graph: Graph,
     fscache: FileSystemCache,
     refresh_file: Callable[[str, str], list[str]],

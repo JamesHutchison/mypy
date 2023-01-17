@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import copy
 import errno
 import gc
 import json
@@ -31,6 +32,7 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
+    Generator,
     Iterable,
     Iterator,
     Mapping,
@@ -558,6 +560,45 @@ def find_config_file_line_number(path: str, section: str, setting_name: str) -> 
     return -1
 
 
+class DependencyGraph:
+    def __init__(self, dependency_map: dict[str, set[str]] | None = None) -> None:
+        self._deps: dict[str, set[str]] = collections.defaultdict(set)
+        self._reverse_deps: dict[str, set[str]] = collections.defaultdict(set)
+        if dependency_map:
+            for k, v in dependency_map.items():
+                self.update(k, v)
+
+    def __get__(self, key: str) -> str:
+        return self._deps[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._deps
+
+    def get(self, key: str, default=None) -> str:
+        return self._deps.get(key, default)
+
+    def get_reverse(self, key: str, default=None) -> str:
+        return self._reverse_deps.get(key, default)
+
+    def update(self, key: str, values: set[str]) -> None:
+        # previous_deps = copy.copy(self._deps[key])
+        self._deps[key].update(values)
+        for value in values:
+            self._reverse_deps[value].add(key)
+
+    def items(self) -> Iterable[str, set[str]]:
+        return self._deps.items()
+
+    # def __set__(self, key: str, value: set[str]) -> None:
+    #     previous_value = self._deps[key]
+    #     self._deps[key] = value
+    #     self._update_reverse_deps(key, value, previous_value)
+
+    # def _update_reverse_deps(self, key: str, value: str) -> None:
+    #     for dep in value:
+    #         self._reverse_deps
+
+
 class BuildManager:
     """This class holds shared state for building a mypy program.
 
@@ -636,7 +677,7 @@ class BuildManager:
         # processed. We store this in BuildManager so that we can compute
         # dependencies as we go, which allows us to free ASTs and type information,
         # saving a ton of memory on net.
-        self.fg_deps: dict[str, set[str]] = {}
+        self.fg_deps = DependencyGraph()
         # Always convert the plugin to a ChainedPlugin so that it can be manipulated if needed
         if not isinstance(plugin, ChainedPlugin):
             plugin = ChainedPlugin(options, [plugin])
@@ -2453,7 +2494,7 @@ class State:
             options=self.manager.options,
         )
 
-    def update_fine_grained_deps(self, deps: dict[str, set[str]]) -> None:
+    def update_fine_grained_deps(self, deps: DependencyGraph) -> None:
         options = self.manager.options
         if options.cache_fine_grained or options.fine_grained_incremental:
             from mypy.server.deps import merge_dependencies  # Lazy import to speed up startup
