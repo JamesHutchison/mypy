@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Set, Tuple
 from typing_extensions import Final, TypeAlias as _TypeAlias
+from mypy.dependency_graphs import DependencyGraph
 
 from mypy.nodes import TypeInfo
 from mypy.server.trigger import make_trigger
@@ -233,7 +234,7 @@ class TypeState:
                 deps.setdefault(trigger, set()).add(proto)
         return deps
 
-    def update_protocol_deps(self, second_map: dict[str, set[str]] | None = None) -> None:
+    def update_protocol_deps(self, existing_deps: DependencyGraph | None = None) -> None:
         """Update global protocol dependency map.
 
         We update the global map incrementally, using a snapshot only from recently
@@ -244,14 +245,14 @@ class TypeState:
         new_deps = self._snapshot_protocol_deps()
         for trigger, targets in new_deps.items():
             self.proto_deps.setdefault(trigger, set()).update(targets)
-        if second_map is not None:
+        if existing_deps is not None:
             for trigger, targets in new_deps.items():
-                second_map.setdefault(trigger, set()).update(targets)
+                existing_deps.update(trigger, targets)
         self._rechecked_types.clear()
         self._attempted_protocols.clear()
         self._checked_against_members.clear()
 
-    def add_all_protocol_deps(self, deps: dict[str, set[str]]) -> None:
+    def add_all_protocol_deps(self, deps: DependencyGraph) -> None:
         """Add all known protocol dependencies to deps.
 
         This is used by tests and debug output, and also when collecting
@@ -260,7 +261,7 @@ class TypeState:
         self.update_protocol_deps()  # just in case
         if self.proto_deps is not None:
             for trigger, targets in self.proto_deps.items():
-                deps.setdefault(trigger, set()).update(targets)
+                deps.update(trigger, targets)
 
 
 type_state: Final = TypeState()

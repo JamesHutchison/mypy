@@ -83,7 +83,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import List
-from mypy.build import DependencyGraph
+from mypy.dependency_graphs import DependencyGraph
 
 from mypy.nodes import (
     GDEF,
@@ -182,11 +182,11 @@ def get_dependencies(
     type_map: dict[Expression, Type],
     python_version: tuple[int, int],
     options: Options,
-) -> dict[str, set[str]]:
+) -> DependencyGraph:
     """Get all dependencies of a node, recursively."""
     visitor = DependencyVisitor(type_map, python_version, target.alias_deps, options)
     target.accept(visitor)
-    return DependencyGraph(visitor.map)  # visitor.map
+    return DependencyGraph(visitor.map, module_files={target.fullname})  # visitor.map
 
 
 def get_dependencies_of_target(
@@ -1094,7 +1094,9 @@ class TypeTriggersVisitor(TypeVisitor[List[str]]):
         return triggers
 
 
-def merge_dependencies(new_deps: dict[str, set[str]], deps: DependencyGraph) -> None:
+def merge_dependencies(new_deps: DependencyGraph, deps: DependencyGraph) -> None:
+    for module_file in new_deps.module_files:
+        deps.add_module_file(module_file)
     for trigger, targets in new_deps.items():
         deps.update(trigger, targets)
 
@@ -1114,7 +1116,7 @@ def dump_all_dependencies(
     options: Options,
 ) -> None:
     """Generate dependencies for all interesting modules and print them to stdout."""
-    all_deps: dict[str, set[str]] = {}
+    all_deps = DependencyGraph()
     for id, node in modules.items():
         # Uncomment for debugging:
         # print('processing', id)
@@ -1123,7 +1125,7 @@ def dump_all_dependencies(
         assert id == node.fullname
         deps = get_dependencies(node, type_map, python_version, options)
         for trigger, targets in deps.items():
-            all_deps.setdefault(trigger, set()).update(targets)
+            all_deps.update(trigger, targets)
     type_state.add_all_protocol_deps(all_deps)
 
     for trigger, targets in sorted(all_deps.items(), key=lambda x: x[0]):

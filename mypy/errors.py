@@ -8,6 +8,7 @@ from typing import Callable, NoReturn, Optional, TextIO, Tuple, TypeVar
 from typing_extensions import Final, Literal, TypeAlias as _TypeAlias
 
 from mypy import errorcodes as codes
+from mypy.build import State
 from mypy.errorcodes import IMPORT, ErrorCode
 from mypy.message_registry import ErrorMessage
 from mypy.options import Options
@@ -280,11 +281,11 @@ class Errors:
         self.read_source = read_source
         self.many_errors_threshold = many_errors_threshold
         self.options = options
-        self.prior_errors_map = {}
+        self.prior_errors_map: dict[str, list[str]] = {}
         self.initialize()
 
     def initialize(self) -> None:
-        self.error_info_map = {}
+        self.error_info_map: dict[str, list[str]] = {}
         self.flushed_files = set()
         self.import_ctx = []
         self.function_or_member = [None]
@@ -297,14 +298,17 @@ class Errors:
         self.target_module = None
         self.seen_import_error = False
 
-    def reset(self, full: bool = False, module: str | None = None) -> None:
+    def reset(
+        self, full: bool = False, module: str | None = None, path: str | None = None
+    ) -> None:
         assert not (full and module)
+        self.prior_errors_map |= self.error_info_map
         if full:
             self.prior_errors_map = {}
-        elif module:
+        if module:
             self.prior_errors_map[module] = []
-        else:
-            self.prior_errors_map |= self.error_info_map
+        if path:
+            self.prior_errors_map[path] = []
         self.initialize()
 
     def set_ignore_prefix(self, prefix: str) -> None:
@@ -626,6 +630,7 @@ class Errors:
             self.error_info_map[path] = new_errors
             if not has_blocker and path in self.has_blockers:
                 self.has_blockers.remove(path)
+        self.prior_errors_map[path] = []
 
     def generate_unused_ignore_errors(self, file: str) -> None:
         if (
@@ -873,7 +878,7 @@ class Errors:
                 msgs.extend(self.file_messages(path, error_info_map))
         return msgs
 
-    def prior_messages(self) -> list[str]:
+    def prior_messages(self, graph: dict[State]) -> list[str]:
         """
         Return a string list of prior error messages.
 
@@ -881,6 +886,7 @@ class Errors:
         Errors from different files are ordered based on the order in which
         they first generated an error.
         """
+        # TOOD: use graph
         return self.new_messages(self.prior_errors_map)
 
     def targets(self) -> set[str]:

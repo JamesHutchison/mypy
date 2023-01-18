@@ -45,6 +45,7 @@ from typing import (
 from typing_extensions import Final, TypeAlias as _TypeAlias
 
 from mypy_extensions import TypedDict
+from mypy.dependency_graphs import DependencyGraph
 
 import mypy.semanal_main
 from mypy.checker import TypeChecker
@@ -560,45 +561,6 @@ def find_config_file_line_number(path: str, section: str, setting_name: str) -> 
     return -1
 
 
-class DependencyGraph:
-    def __init__(self, dependency_map: dict[str, set[str]] | None = None) -> None:
-        self._deps: dict[str, set[str]] = collections.defaultdict(set)
-        self._reverse_deps: dict[str, set[str]] = collections.defaultdict(set)
-        if dependency_map:
-            for k, v in dependency_map.items():
-                self.update(k, v)
-
-    def __get__(self, key: str) -> str:
-        return self._deps[key]
-
-    def __contains__(self, key: str) -> bool:
-        return key in self._deps
-
-    def get(self, key: str, default=None) -> str:
-        return self._deps.get(key, default)
-
-    def get_reverse(self, key: str, default=None) -> str:
-        return self._reverse_deps.get(key, default)
-
-    def update(self, key: str, values: set[str]) -> None:
-        # previous_deps = copy.copy(self._deps[key])
-        self._deps[key].update(values)
-        for value in values:
-            self._reverse_deps[value].add(key)
-
-    def items(self) -> Iterable[str, set[str]]:
-        return self._deps.items()
-
-    # def __set__(self, key: str, value: set[str]) -> None:
-    #     previous_value = self._deps[key]
-    #     self._deps[key] = value
-    #     self._update_reverse_deps(key, value, previous_value)
-
-    # def _update_reverse_deps(self, key: str, value: str) -> None:
-    #     for dep in value:
-    #         self._reverse_deps
-
-
 class BuildManager:
     """This class holds shared state for building a mypy program.
 
@@ -902,7 +864,7 @@ class BuildManager:
         self.errors.set_file_ignored_lines(path, tree.ignored_lines, ignore_errors)
         return tree
 
-    def load_fine_grained_deps(self, id: str) -> dict[str, set[str]]:
+    def load_fine_grained_deps(self, id: str) -> DependencyGraph:
         t0 = time.time()
         if id in self.fg_deps_meta:
             # TODO: Assert deps file wasn't changed.
@@ -911,7 +873,7 @@ class BuildManager:
             deps = {}
         val = {k: set(v) for k, v in deps.items()}
         self.add_stats(load_fg_deps_time=time.time() - t0)
-        return val
+        return DependencyGraph(val)
 
     def report_file(
         self, file: MypyFile, type_map: dict[Expression, Type], options: Options
@@ -1037,7 +999,7 @@ def write_deps_cache(
         manager.errors.report(0, 0, "Error writing fine-grained dependencies cache", blocker=True)
 
 
-def invert_deps(deps: dict[str, set[str]], graph: Graph) -> dict[str, dict[str, set[str]]]:
+def invert_deps(deps: DependencyGraph, graph: Graph) -> dict[str, dict[str, set[str]]]:
     """Splits fine-grained dependencies based on the module of the trigger.
 
     Returns a dictionary from module ids to all dependencies on that
@@ -2131,7 +2093,7 @@ class State:
         if check_blockers:
             self.check_blockers()
 
-    def load_fine_grained_deps(self) -> dict[str, set[str]]:
+    def load_fine_grained_deps(self) -> DependencyGraph:
         return self.manager.load_fine_grained_deps(self.id)
 
     def load_tree(self, temporary: bool = False) -> None:
@@ -2474,7 +2436,7 @@ class State:
             elif dep not in self.suppressed_set and dep in self.manager.missing_modules:
                 self.suppress_dependency(dep)
 
-    def compute_fine_grained_deps(self) -> dict[str, set[str]]:
+    def compute_fine_grained_deps(self) -> DependencyGraph:
         assert self.tree is not None
         if self.id in ("builtins", "typing", "types", "sys", "_typeshed"):
             # We don't track changes to core parts of typeshed -- the
@@ -2484,7 +2446,7 @@ class State:
             # build. Other modules may be brought in as a result of an
             # fine-grained increment, and we may need these
             # dependencies then to handle cyclic imports.
-            return {}
+            return DependencyGraph()
         from mypy.server.deps import get_dependencies  # Lazy import to speed up startup
 
         return get_dependencies(
