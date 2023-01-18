@@ -126,12 +126,12 @@ from mypy.build import (
     FAKE_ROOT_MODULE,
     BuildManager,
     BuildResult,
-    DependencyGraph,
     Graph,
     State,
     load_graph,
     process_fresh_modules,
 )
+from mypy.dependency_graphs import DependencyGraph
 from mypy.checker import FineGrainedDeferredNode
 from mypy.errors import CompileError
 from mypy.fscache import FileSystemCache
@@ -161,8 +161,8 @@ from mypy.server.trigger import WILDCARD_TAG, make_trigger
 from mypy.typestate import type_state
 from mypy.util import module_prefix, split_target
 
-MAX_DEPTH: Final = 2
-MAX_ITER: Final = 10
+MAX_DEPTH: Final = 10
+MAX_ITER: Final = 1000
 
 SENSITIVE_INTERNAL_MODULES = tuple(core_modules) + ("mypy_extensions", "typing_extensions")
 
@@ -266,7 +266,7 @@ class FineGrainedBuildManager:
                 changed_modules, initial_set, removed_set, blocking_error, followed
             )
             changed_modules, (next_id, next_path), blocker_messages = result
-            self.manager.errors.prior_errors_map.pop(next_path, None)
+            old_value = self.manager.errors.prior_errors_map.pop(next_path, None)
 
             if blocker_messages is not None:
                 self.blocking_error = (next_id, next_path)
@@ -290,7 +290,7 @@ class FineGrainedBuildManager:
                     self.deps,
                     set(),
                     {next_id},
-                    set(),  # self.previous_targets_with_errors,
+                    self.previous_targets_with_errors,
                     self.processed_targets,
                 )
                 changed_modules = dedupe_modules(changed_modules)
@@ -301,7 +301,7 @@ class FineGrainedBuildManager:
                 break
 
         # new_messages = self.manager.errors.new_messages()
-        prior_messages = self.manager.errors.prior_messages()
+        prior_messages = self.manager.errors.prior_messages(self.graph)
         new_messages = messages + prior_messages
         sorted_messages = sort_messages_preserving_file_order(new_messages, self.previous_messages)
         self.previous_messages = sorted_messages[:]
@@ -314,7 +314,7 @@ class FineGrainedBuildManager:
         """
         self.manager.errors.reset(module=target)
         changed_modules = propagate_changes_using_dependencies(
-            self.manager, self.graph, self.deps, self.reverse_deps, set(), set(), {target}, []
+            self.manager, self.graph, self.deps, set(), set(), {target}, []
         )
         # Preserve state needed for the next update.
         self.previous_targets_with_errors = self.manager.errors.targets()
@@ -422,7 +422,7 @@ class FineGrainedBuildManager:
             snapshot = snapshot_symbol_table(module, manager.modules[module].names)
             old_snapshots[module] = snapshot
 
-        manager.errors.reset(module=module)
+        manager.errors.reset(module=module, path=path)
         self.processed_targets.append(module)
         result = update_module_isolated(
             module, path, manager, previous_modules, graph, force_removed, followed
@@ -493,7 +493,7 @@ def find_unloaded_deps(
     return unloaded
 
 
-def ensure_deps_loaded(module: str, deps: dict[str, set[str]], graph: dict[str, State]) -> None:
+def ensure_deps_loaded(module: str, deps: DependencyGraph, graph: dict[str, State]) -> None:
     """Ensure that the dependencies on a module are loaded.
 
     Dependencies are loaded into the 'deps' dictionary.
@@ -842,10 +842,15 @@ def propagate_changes_using_dependencies(
 
     num_iter = 0
     remaining_modules: list[tuple[str, str]] = []
+    module_dependencies = deps.get_dependencies((f"<{mod}>" for mod in up_to_date_modules))
+    others = set()
+    for mod in module_dependencies:
+        others |= deps.get_others_in_module(mod)
+    targets_to_care_about = targets_with_errors & (module_dependencies | others)
 
     # Propagate changes until nothing visible has changed during the last
     # iteration.
-    while triggered or targets_with_errors:
+    while triggered or targets_to_care_about:
         num_iter += 1
         if num_iter > MAX_ITER:
             raise RuntimeError("Max number of iterations (%d) reached (endless loop?)" % MAX_ITER)
@@ -857,7 +862,7 @@ def propagate_changes_using_dependencies(
         remaining_modules.extend((id, graph[id].xpath) for id in sorted(unloaded))
         # Also process targets that used to have errors, as otherwise some
         # errors might be lost.
-        for target in targets_with_errors:
+        for target in targets_to_care_about:
             id = module_prefix(graph, target)
             if id is not None and id not in up_to_date_modules:
                 if id not in todo:
@@ -880,7 +885,7 @@ def propagate_changes_using_dependencies(
         # previously considered up to date. For example, there may be a
         # dependency loop that loops back to an originally processed module.
         up_to_date_modules = set()
-        targets_with_errors = set()
+        targets_to_care_about = set()
         if is_verbose(manager):
             manager.log_fine_grained(f"triggered: {list(triggered)!r}")
 
@@ -1084,8 +1089,9 @@ def update_deps(
         new_deps = get_dependencies_of_target(
             module_id, tree, node, type_map, options.python_version
         )
+        deps.add_module_file(module_id)
         for trigger, targets in new_deps.items():
-            deps.setdefault(trigger, set()).update(targets)
+            deps.update(trigger, targets)
     # Merge also the newly added protocol deps (if any).
     type_state.update_protocol_deps(deps)
 
