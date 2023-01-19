@@ -148,8 +148,17 @@ def compare_symbol_table_snapshots(
             assert isinstance(item2[-1], dict)
             triggers |= compare_symbol_table_snapshots(item_name, item1[-1], item2[-1])
         else:
+            # Note: seeing bizarre sanity check failing equality happening in debugger here
+            # snapshot1[name] != snapshot2[name] will be False but will be in if condition anyways
             # Shallow node (no interesting internal structure). Just use equality.
             if snapshot1[name] != snapshot2[name]:
+                import sys
+
+                print(name, str(snapshot1[name]), file=sys.stderr)
+                print(name, str(snapshot2[name]), file=sys.stderr)
+                if name == "__builtins__":
+                    raise Exception(str(snapshot1[name]), str(snapshot2[name]))
+                assert snapshot1[name] != snapshot2[name]
                 triggers.add(item_name)
 
     return triggers

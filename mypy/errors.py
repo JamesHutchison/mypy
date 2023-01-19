@@ -4,17 +4,19 @@ import os.path
 import sys
 import traceback
 from collections import defaultdict
-from typing import Callable, NoReturn, Optional, TextIO, Tuple, TypeVar
+from typing import TYPE_CHECKING, Callable, NoReturn, Optional, TextIO, Tuple, TypeVar
 from typing_extensions import Final, Literal, TypeAlias as _TypeAlias
 
 from mypy import errorcodes as codes
-from mypy.build import State
 from mypy.errorcodes import IMPORT, ErrorCode
 from mypy.message_registry import ErrorMessage
 from mypy.options import Options
 from mypy.scope import Scope
 from mypy.util import DEFAULT_SOURCE_OFFSET, is_typeshed_file
 from mypy.version import __version__ as mypy_version
+
+if TYPE_CHECKING:
+    from mypy.build import State
 
 T = TypeVar("T")
 
@@ -107,6 +109,7 @@ class ErrorInfo:
         allow_dups: bool,
         origin: tuple[str, int, int] | None = None,
         target: str | None = None,
+        one_time: bool = False,
     ) -> None:
         self.import_ctx = import_ctx
         self.file = file
@@ -125,6 +128,7 @@ class ErrorInfo:
         self.allow_dups = allow_dups
         self.origin = origin or (file, line, line)
         self.target = target
+        self.one_time = one_time
 
 
 # Type used internally to represent errors:
@@ -281,7 +285,8 @@ class Errors:
         self.read_source = read_source
         self.many_errors_threshold = many_errors_threshold
         self.options = options
-        self.prior_errors_map: dict[str, list[str]] = {}
+        self.prior_errors_map: dict[str, list[ErrorInfo]] = {}
+        self.prior_has_blockers: set[str] = set()
         self.initialize()
 
     def initialize(self) -> None:
@@ -302,9 +307,14 @@ class Errors:
         self, full: bool = False, module: str | None = None, path: str | None = None
     ) -> None:
         assert not (full and module)
-        self.prior_errors_map |= self.error_info_map
+        self.prior_errors_map.update(self.error_info_map)
+        # filter out one time errors
+        for p, err_list in self.prior_errors_map.items():
+            print(err_list)
+            self.prior_errors_map[p] = list(filter(lambda x: x.one_time is not True, err_list))
         if full:
             self.prior_errors_map = {}
+            self.prior_has_blockers = set()
         if module:
             self.prior_errors_map[module] = []
         if path:
@@ -383,6 +393,7 @@ class Errors:
         offset: int = 0,
         end_line: int | None = None,
         end_column: int | None = None,
+        one_time: bool | None = None,
     ) -> None:
         """Report message at the given line using the current error context.
 
@@ -399,6 +410,7 @@ class Errors:
             origin_span: if non-None, override current context as origin
                          (type: ignores have effect here)
             end_line: if non-None, override current context as end
+            one_time: if True, this is a one time error that shouldn't be persisted on reruns
         """
         if self.scope:
             type = self.scope.current_type_name()
@@ -448,6 +460,7 @@ class Errors:
             allow_dups,
             origin=(self.file, *origin_span),
             target=self.current_target(),
+            one_time=one_time,
         )
         self.add_error_info(info)
 
@@ -878,7 +891,12 @@ class Errors:
                 msgs.extend(self.file_messages(path, error_info_map))
         return msgs
 
-    def prior_messages(self, graph: dict[State]) -> list[str]:
+    def rotate_prior_blockers(self) -> None:
+        for blocker in self.prior_has_blockers:
+            self.prior_errors_map.pop(blocker, None)
+        self.prior_has_blockers = self.has_blockers
+
+    def prior_messages(self) -> list[str]:
         """
         Return a string list of prior error messages.
 

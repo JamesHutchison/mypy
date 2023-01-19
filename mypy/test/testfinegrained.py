@@ -96,7 +96,7 @@ class FineGrainedSuite(DataSuite):
             messages = self.build(build_options, sources)
         else:
             messages = self.run_check(server, sources)
-            server.clear_errors()  # clear error saving to /dev/null
+            # server.clear_errors()  # clear error saving to /dev/null
 
         a = []
         if messages:

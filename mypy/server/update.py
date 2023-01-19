@@ -161,8 +161,10 @@ from mypy.server.trigger import WILDCARD_TAG, make_trigger
 from mypy.typestate import type_state
 from mypy.util import module_prefix, split_target
 
+# from watchpoints import watch
+
 MAX_DEPTH: Final = 10
-MAX_ITER: Final = 1000
+MAX_ITER: Final = 10
 
 SENSITIVE_INTERNAL_MODULES = tuple(core_modules) + ("mypy_extensions", "typing_extensions")
 
@@ -261,6 +263,8 @@ class FineGrainedBuildManager:
             blocking_error = self.blocking_error[0]
             self.blocking_error = None
 
+        # watch(self.manager.errors.error_info_map)
+
         while True:
             result = self.update_one(
                 changed_modules, initial_set, removed_set, blocking_error, followed
@@ -301,7 +305,8 @@ class FineGrainedBuildManager:
                 break
 
         # new_messages = self.manager.errors.new_messages()
-        prior_messages = self.manager.errors.prior_messages(self.graph)
+        self.manager.errors.rotate_prior_blockers()
+        prior_messages = self.manager.errors.prior_messages()
         new_messages = messages + prior_messages
         sorted_messages = sort_messages_preserving_file_order(new_messages, self.previous_messages)
         self.previous_messages = sorted_messages[:]
