@@ -266,6 +266,7 @@ class FineGrainedBuildManager:
         # watch(self.manager.errors.error_info_map)
 
         while True:
+            orig_changed_modules = changed_modules[:]
             result = self.update_one(
                 changed_modules, initial_set, removed_set, blocking_error, followed
             )
@@ -427,7 +428,16 @@ class FineGrainedBuildManager:
             snapshot = snapshot_symbol_table(module, manager.modules[module].names)
             old_snapshots[module] = snapshot
 
-        manager.errors.reset(module=module, path=path)
+        # if not force_removed:
+        # TODO: fixme, why are there unintended sideffects to not resetting this?
+        if not force_removed or not (
+            [
+                x
+                for x in manager.errors.error_info_map.get(path, [])
+                if "Cannot find implementation" in x.message
+            ]
+        ):
+            manager.errors.reset(module=module, path=path)
         self.processed_targets.append(module)
         result = update_module_isolated(
             module, path, manager, previous_modules, graph, force_removed, followed
@@ -934,7 +944,7 @@ def find_targets_recursive(
                     ensure_deps_loaded(module_id, deps, graph)
 
                 worklist |= deps.get(target, set()) - processed
-                worklist |= deps.get_reverse(target, set()) - processed
+                # worklist |= deps.get_reverse(target, set()) - processed
             else:
                 module_id = module_prefix(graph, target)
                 if module_id is None:

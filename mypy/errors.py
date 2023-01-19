@@ -393,7 +393,7 @@ class Errors:
         offset: int = 0,
         end_line: int | None = None,
         end_column: int | None = None,
-        one_time: bool | None = None,
+        one_time: bool = False,
     ) -> None:
         """Report message at the given line using the current error context.
 
