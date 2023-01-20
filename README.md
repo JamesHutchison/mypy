@@ -1,7 +1,7 @@
 
 ## DMyPy Performance Update Branch
 
-### Status: Shelved
+### Status: Shelved - broken state
 
 The purpose of this branch was to improve `dmypy` performance. There's a substantial performance problem
 that seems to only occur in certain circumstances. After an initial investigation by creating a "ball of mud"
