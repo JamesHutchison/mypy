@@ -20,7 +20,7 @@ class DependencyGraph:
     def module_files(self) -> set[str]:
         return self._module_files
 
-    def __get__(self, key: str) -> set[str]:
+    def __getitem__(self, key: str) -> set[str]:
         return self._deps[key]
 
     def __contains__(self, key: str) -> bool:
