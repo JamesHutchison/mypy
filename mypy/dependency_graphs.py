@@ -47,7 +47,7 @@ class DependencyGraph:
                         self._parent_modules[parent].add(value)
                         break
                     cur = parent
-            self._reverse_deps[value].add(key)
+            self._reverse_deps[value].add(key.replace("[wildcard]", ""))
 
     def items(self) -> Iterable[tuple[str, set[str]]]:
         return self._deps.items()

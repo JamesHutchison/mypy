@@ -98,8 +98,13 @@ class FineGrainedSuite(DataSuite):
             messages = self.run_check(server, sources)
             # server.clear_errors()  # clear error saving to /dev/null
 
+        steps = testcase.find_steps()
+        # steps = None
         a = []
         if messages:
+            # if steps == [[]]:
+            #     # emulate prior behavior
+            #     a.append("==")
             a.extend(normalize_messages(messages))
 
         assert testcase.tmpdir
@@ -110,10 +115,11 @@ class FineGrainedSuite(DataSuite):
             if CHECK_CONSISTENCY:
                 check_consistency(server.fine_grained_manager)
 
-        steps = testcase.find_steps()
+        # steps = testcase.find_steps()
         all_triggered = []
         a_before = None
 
+        # if True:  # steps != [[]]:
         for operations in steps:
             step += 1
             # server.clear_errors()

@@ -264,11 +264,17 @@ class FineGrainedBuildManager:
             self.blocking_error = None
 
         # watch(self.manager.errors.error_info_map)
+        orig_changed_modules: list[tuple[str, str]] = changed_modules[:]
+        up_to_date_modules: set[str] = set()  # mutated :(
 
         while True:
-            orig_changed_modules = changed_modules[:]
             result = self.update_one(
-                changed_modules, initial_set, removed_set, blocking_error, followed
+                changed_modules,
+                initial_set,
+                removed_set,
+                blocking_error,
+                followed,
+                up_to_date_modules,
             )
             changed_modules, (next_id, next_path), blocker_messages = result
             old_value = self.manager.errors.prior_errors_map.pop(next_path, None)
@@ -294,10 +300,12 @@ class FineGrainedBuildManager:
                     self.graph,
                     self.deps,
                     set(),
-                    {next_id},
+                    {next_id} | up_to_date_modules,
                     self.previous_targets_with_errors,
                     self.processed_targets,
+                    # targets_to_process={x[0] for x in orig_changed_modules},
                 )
+                up_to_date_modules.add(next_id)
                 changed_modules = dedupe_modules(changed_modules)
             if not changed_modules:
                 # Preserve state needed for the next update.
@@ -342,6 +350,7 @@ class FineGrainedBuildManager:
         removed_set: set[str],
         blocking_error: str | None,
         followed: bool,
+        up_to_date_modules: set[str] | None = None,
     ) -> tuple[list[tuple[str, str]], tuple[str, str], list[str] | None]:
         """Process a module from the list of changed modules.
 
@@ -368,7 +377,13 @@ class FineGrainedBuildManager:
             )
             return changed_modules, (next_id, next_path), None
 
-        result = self.update_module(next_id, next_path, next_id in removed_set, followed)
+        result = self.update_module(
+            next_id,
+            next_path,
+            next_id in removed_set,
+            followed,
+            up_to_date_modules=up_to_date_modules,
+        )
         remaining, (next_id, next_path), blocker_messages = result
         changed_modules = [(id, path) for id, path in changed_modules if id != next_id]
         changed_modules = dedupe_modules(remaining + changed_modules)
@@ -381,7 +396,7 @@ class FineGrainedBuildManager:
         return changed_modules, (next_id, next_path), blocker_messages
 
     def update_module(
-        self, module: str, path: str, force_removed: bool, followed: bool
+        self, module: str, path: str, force_removed: bool, followed: bool, up_to_date_modules=None
     ) -> tuple[list[tuple[str, str]], tuple[str, str], list[str] | None]:
         """Update a single modified module.
 
@@ -402,6 +417,9 @@ class FineGrainedBuildManager:
             - Module which was actually processed as (id, path) tuple
             - If there was a blocking error, the error messages from it
         """
+        if up_to_date_modules is None:
+            up_to_date_modules = set()
+        up_to_date_modules.add(module)
         self.manager.log_fine_grained(f"--- update single {module!r} ---")
         self.updated_modules.append(module)
 
@@ -430,6 +448,7 @@ class FineGrainedBuildManager:
 
         # if not force_removed:
         # TODO: fixme, why are there unintended sideffects to not resetting this?
+        # FIXME: JamesHutchison this stinks. The issue here is that we're resetting files that don't exist
         if not force_removed or not (
             [
                 x
@@ -466,7 +485,7 @@ class FineGrainedBuildManager:
             graph,
             self.deps,
             triggered,
-            {module},
+            up_to_date_modules,
             targets_with_errors=set(),
             processed_targets=self.processed_targets,
         )
@@ -845,6 +864,7 @@ def propagate_changes_using_dependencies(
     up_to_date_modules: set[str],
     targets_with_errors: set[str],
     processed_targets: list[str],
+    targets_to_process: set[str] | None = None,
 ) -> list[tuple[str, str]]:
     """Transitively rechecks targets based on triggers and the dependency map.
 
@@ -861,7 +881,9 @@ def propagate_changes_using_dependencies(
     others = set()
     for mod in module_dependencies:
         others |= deps.get_others_in_module(mod)
-    targets_to_care_about = targets_with_errors & (module_dependencies | others)
+    targets_to_care_about = targets_with_errors & (module_dependencies | others) | (
+        targets_to_process or set()
+    )
 
     # Propagate changes until nothing visible has changed during the last
     # iteration.
@@ -899,12 +921,18 @@ def propagate_changes_using_dependencies(
         # Changes elsewhere may require us to reprocess modules that were
         # previously considered up to date. For example, there may be a
         # dependency loop that loops back to an originally processed module.
-        up_to_date_modules = set()
+        # up_to_date_modules = set()
         targets_to_care_about = set()
         if is_verbose(manager):
             manager.log_fine_grained(f"triggered: {list(triggered)!r}")
 
-    return remaining_modules
+    for o in others:
+        up_to_date_modules -= deps.get(o, set())
+
+    result = remaining_modules + [
+        (x, graph[x].xpath) for x in processed_targets if x not in up_to_date_modules
+    ]
+    return result
 
 
 def find_targets_recursive(

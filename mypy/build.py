@@ -1060,9 +1060,7 @@ def write_plugins_snapshot(manager: BuildManager) -> None:
     """Write snapshot of versions and hashes of currently active plugins."""
     if not manager.metastore.write(PLUGIN_SNAPSHOT_FILE, json.dumps(manager.plugins_snapshot)):
         manager.errors.set_file(_cache_dir_prefix(manager.options), None, manager.options)
-        manager.errors.report(
-            0, 0, "Error writing plugins snapshot", blocker=True, one_time=True
-        )
+        manager.errors.report(0, 0, "Error writing plugins snapshot", blocker=True, one_time=True)
 
 
 def read_plugins_snapshot(manager: BuildManager) -> dict[str, str] | None:

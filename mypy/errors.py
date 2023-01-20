@@ -306,7 +306,7 @@ class Errors:
     def reset(
         self, full: bool = False, module: str | None = None, path: str | None = None
     ) -> None:
-        assert not (full and module)
+        assert not (full and (module or path))
         self.prior_errors_map.update(self.error_info_map)
         # filter out one time errors
         for p, err_list in self.prior_errors_map.items():
