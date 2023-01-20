@@ -1,5 +1,40 @@
-<img src="docs/source/mypy_light.svg" alt="mypy logo" width="300px"/>
 
+## DMyPy Performance Update Branch
+
+### Status: Shelved
+
+The purpose of this branch was to improve `dmypy` performance. There's a substantial performance problem
+that seems to only occur in certain circumstances. After an initial investigation by creating a "ball of mud"
+generator, the underlying cause seems to be a couple confounding issues:
+
+- `dmypy`'s `follow import`s need to be "normal" to match typical mypy operation. `dmypy` does NOT support `silent`
+- `dmypy` will re-evaluate every file that has an error. This is due to the propogate logic found [here](https://github.com/JamesHutchison/mypy/blob/master/mypy/server/update.py#L847).
+  - Turning that logic off creates issues because dmypy seems to evaluate files multiple times. For example, the
+    first pass on A will complain that the import B doesn't exist. Next, B will be evaluated, so A needs to be re-evaluated.
+  - I don't think it _needs_ to behave this way. The re-evaluation of failing modules seems to be a convenient solution rather than
+    an ideal one.
+- The result is that if you have a very large repo with a lot of errors, and you're grind through them, just saving a single file
+  can take a long time to get a result. For IDE's like VS Code, this is unacceptable.
+
+The branch attempts to fix the issue correctly by limiting the files processed and remembering the previous failures.
+However, it was difficult to fix one unit test without breaking another. The overall structure of mypy gets in the way,
+at least from what I can tell. The project is very long lived and is correspondingly difficult to change.
+
+My overall impression is that the update logic is more complicated than it needs to be. There's a lot of loops,
+uncommented variables, mutations, undocumented methods and functions, string encodings, and data scattered about. It's gotten to the point where
+I feel a rewrite would overall be more beneficial.
+
+However, I did not budget time for a rewrite, which is why this is getting shelved. For most people, mypy and dmypy is fast enough,
+so I'm not how many may benefit from this. Likewise, `dmypy` attempts to reuse `mypy` logic so a bit of the tech debt is coming from there; as a
+result, isolating a change to "just" rewriting the dmypy update logic may be challenging.
+
+Other possible solutions:
+- Add a maximum limit to errors processed. This seems like a quick and dirty fix for those that are affected by the issue,
+  and after seeing the difficulty trying to do this "properly", is more appealing. I'm not sure if some things may break though as a result.
+- Get `silent` working for `dmypy`. This will substantially reduce the errors kept track of, but this also seems to fundamentally be the problem
+  in the first place. The existing code is effectively using import errors to keep track of the files that need to be reprocessed.
+
+<img src="docs/source/mypy_light.svg" alt="mypy logo" width="300px"/>
 Mypy: Static Typing for Python
 =======================================
 
